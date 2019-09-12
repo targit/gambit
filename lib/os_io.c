@@ -7,6 +7,15 @@
  * related to I/O.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef HAVE_PTHREAD_SETAFFINITY_NP
+/* Needed to get pthread.h to define CPU_ZERO and CPU_SET */
+#define _GNU_SOURCE
+#endif
+
 #define ___INCLUDED_FROM_OS_IO
 #define ___VERSION 409003
 #include "gambit.h"
@@ -8975,6 +8984,36 @@ int options;)
           /* child process */
 
           ___cleanup_all_interrupt_handling ();
+
+#ifdef ___USE_POSIX_THREAD_SYSTEM
+
+#   ifdef ___USE_THREAD_POLICY_SET
+
+          /* TODO: Does a set thread affinity affect the child under
+           * MacOS? */
+
+#   else
+
+#      ifdef HAVE_PTHREAD_SETAFFINITY_NP
+
+          {
+              cpu_set_t cpuset;
+              int k;
+              int num_cpus = ___cpu_count();
+
+              CPU_ZERO(&cpuset);
+              for( k = 0; k < num_cpus ; k++ ) { CPU_SET( k, &cpuset); }
+
+              pthread_setaffinity_np (pthread_self (),
+                                      sizeof (cpu_set_t),
+                                      &cpuset); /* ignore error */
+          }
+
+#     endif
+
+#   endif
+
+#endif
 
           if (options & (STDIN_REDIR | STDOUT_REDIR | STDERR_REDIR))
             {
