@@ -7,6 +7,15 @@
  * related to I/O.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef HAVE_PTHREAD_SETAFFINITY_NP
+/* Needed to get pthread.h to define CPU_ZERO and CPU_SET */
+#define _GNU_SOURCE
+#endif
+
 #define ___INCLUDED_FROM_OS_IO
 #define ___VERSION 409003
 #include "gambit.h"
@@ -8481,13 +8490,21 @@ ___mask_child_interrupts_state *state;)
 #endif
 
 #ifdef USE_CreateProcess
+#   ifdef ___USE_WIN32_THREAD_SYSTEM
+#       define CP_ENV_THREAD_FLAGS CREATE_SUSPENDED
+#   else
+#       define CP_ENV_THREAD_FLAGS 0
+#   endif
+
 #ifdef _UNICODE
 #define ___STREAM_OPEN_PROCESS_CE_SELECT(latin1,utf8,ucs2,ucs4,wchar,native) ucs2
-#define CP_ENV_FLAGS CREATE_UNICODE_ENVIRONMENT
+#define CP_ENV_ENCODING_FLAGS CREATE_UNICODE_ENVIRONMENT
 #else
 #define ___STREAM_OPEN_PROCESS_CE_SELECT(latin1,utf8,ucs2,ucs4,wchar,native) native
-#define CP_ENV_FLAGS 0
+#define CP_ENV_ENCODING_FLAGS 0
 #endif
+
+#   define CP_ENV_FLAGS (CP_ENV_ENCODING_FLAGS | CP_ENV_THREAD_FLAGS)
 #endif
 
 #endif
@@ -8976,6 +8993,36 @@ int options;)
 
           ___cleanup_all_interrupt_handling ();
 
+#ifdef ___USE_POSIX_THREAD_SYSTEM
+
+#   ifdef ___USE_THREAD_POLICY_SET
+
+          /* TODO: Does a set thread affinity affect the child under
+           * MacOS? */
+
+#   else
+
+#      ifdef HAVE_PTHREAD_SETAFFINITY_NP
+
+          {
+              cpu_set_t cpuset;
+              int k;
+              int num_cpus = ___cpu_count();
+
+              CPU_ZERO(&cpuset);
+              for( k = 0; k < num_cpus ; k++ ) { CPU_SET( k, &cpuset); }
+
+              pthread_setaffinity_np (pthread_self (),
+                                      sizeof (cpu_set_t),
+                                      &cpuset); /* ignore error */
+          }
+
+#     endif
+
+#   endif
+
+#endif
+
           if (options & (STDIN_REDIR | STDOUT_REDIR | STDERR_REDIR))
             {
               if (open_full_duplex_pipe2 (&fdp, options & PSEUDO_TERM) < 0 ||
@@ -9221,6 +9268,16 @@ int options;)
       else
         {
           direction = ___DIRECTION_RD|___DIRECTION_WR;
+
+#ifdef ___USE_WIN32_THREAD_SYSTEM
+          {
+              DWORD_PTR proc_af_mask_unused;
+              DWORD_PTR sys_af_mask;
+              if( GetProcessAffinityMask( si.hProcess, &proc_af_mask_unused, &proc_sys_af_mask ) != 0 )
+                  SetProcessAffinityMask( si.hProcess, sys_af_mask ); /* ignore error */
+              ResumeThread( si.hThread ); /* FIXME: ignore error? */
+          }
+#endif
 
           e = ___device_process_setup_from_process
                 (&d,
